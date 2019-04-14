@@ -1,0 +1,15 @@
+# Test the PowerShell CRUD api
+# CTRL+ALT+R - run request
+
+@host = http://127.0.0.1:10024
+@endpoint = /
+
+
+### Base request
+GET {{host}}/ HTTP/1.1
+Accept: application/json
+
+
+### 404 test
+GET {{host}}/QWERTY/ HTTP/1.1
+Accept: application/json
