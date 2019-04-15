@@ -44,7 +44,7 @@ filter isNumeric() {
        -or $s -is [sbyte] -or $s -is [uint16] -or $s -is [uint32] -or $s -is [uint64] `
        -or $s -is [float] -or $s -is [double] -or $s -is [decimal]
     # Copy/pasted this beauty from here
-    #https://stackoverflow.com/questions/10928030/in-powershell-how-can-i-test-if-a-variable-holds-a-numeric-value
+    # https://stackoverflow.com/questions/10928030/in-powershell-how-can-i-test-if-a-variable-holds-a-numeric-value
 }
 
 function BuildPostQuery(){
@@ -105,7 +105,6 @@ function MethodHandler(){
           `"errors`": [],
           `"data`": $data
         }"
-        
     } 
     return $content 
 }
@@ -118,10 +117,10 @@ function DatabaseHandler(){
 }
 
 function EndpointHandler(){
-    param ([System.Net.HttpListenerRequest] $req, [System.String] $reqEp)
+    param ([System.Net.HttpListenerRequest] $req, [System.String] $reqEp, [System.Object] $config)
     $content = ""
     if ($reqEp -eq "/" -or $reqEp -eq "/api/" -or $reqEp -eq "/api/$($config.version)/"){
-        $content = GetBaseContent
+        $content = GetBaseContent $config
     } else{
         foreach ($epConfig in $config.endpoints){
             if ($reqEp.Contains($epConfig.endpoint)){
@@ -136,7 +135,7 @@ function EndpointHandler(){
 }
 
 function RequestHandler(){
-    param ([System.Net.HttpListenerContext] $context, [System.String] $baseUrl)
+    param([System.Net.HttpListenerContext] $context, [System.String] $baseUrl, [System.Object] $config)
     $content = ""
     try {
         $resp = $context.Response
@@ -162,6 +161,7 @@ function RequestHandler(){
 }
 
 function GetBaseContent(){
+    param([System.Object] $config)
     $endpoints = $config.endpoints | Select-Object * -ExcludeProperty server, database, schema, table, unique-identifier | ConvertTo-Json
     return "{
       `"title`": `"Base Endpoint for my PowerShell API`",
@@ -173,17 +173,17 @@ function GetBaseContent(){
 
 function Get400ErrorContent(){
     param ([System.Net.HttpListenerRequest] $req, [System.String] $msg)
-    return GetErrorContent 400 "Bad Request" $msg $req
+    return GetErrorContent 400 "Bad Request" $msg
 }
 
 function Get404ErrorContent(){
     param ([System.Net.HttpListenerRequest] $req)
-    return GetErrorContent 404 "Not Found" "$($req.Url) was not found" $req
+    return GetErrorContent 404 "Not Found" "$($req.Url) was not found"
 }
 
 function Get405ErrorContent(){
     param ([System.Net.HttpListenerRequest] $req)
-    return GetErrorContent 405 "Method Not Allowed" "$($req.Url) does not support $($req.HttpMethod)" $req
+    return GetErrorContent 405 "Method Not Allowed" "$($req.Url) does not support $($req.HttpMethod)"
 }
 
 function Get500ErrorContent(){
@@ -193,7 +193,7 @@ function Get500ErrorContent(){
 }
 
 function GetErrorContent(){
-    param ([System.Int32] $code, [System.String] $type, [System.String] $msg, [System.Net.HttpListenerRequest] $req)
+    param ([System.Int32] $code, [System.String] $type, [System.String] $msg)
     Write-Host("$code  $type  $msg")
     return "{
       `"title`": `"Error`",
@@ -228,6 +228,6 @@ try {
 }
 Write-Host("Listening on $baseUrl ...")
 while ($server.IsListening){
-    RequestHandler $server.GetContext() $baseUrl
+    RequestHandler $server.GetContext() $baseUrl $config
 }
 $server.Stop()
