@@ -3,13 +3,44 @@
 
 @host = http://127.0.0.1:10024
 @endpoint = /
+@version = v1
 
 
 ### Base request
 GET {{host}}/ HTTP/1.1
-Accept: application/json
+Content-Type: application/json
 
 
 ### 404 test
 GET {{host}}/QWERTY/ HTTP/1.1
+Content-Type: application/json
+
+
+### /programmers
+GET {{host}}/api/{{version}}/programmers/ HTTP/1.1
+Content-Type: application/json
+
+
+### /programmers GET
+GET {{host}}/api/{{version}}/programmers/3 HTTP/1.1
+Content-Type: application/json
+
+
+### /programmers POST
+POST {{host}}/api/{{version}}/programmers/ HTTP/1.1
+Content-Type: application/json
 Accept: application/json
+
+{
+    "first_name": "POST",
+    "last_name": "Test",
+    "platform": "Linux",
+    "favorite_language": "PowerShell" 
+}
+
+
+### /products unsupported method
+DELETE {{host}}/api/{{version}}/products/1 HTTP/1.1
+Content-Type: application/json
+
+

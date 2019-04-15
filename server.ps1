@@ -1,5 +1,4 @@
-# A basic CRUD api
-
+# A CRUD api written in PowerShell with no security
 
 function HaltIfUnavailable(){
     param ([System.String] $serverHost, [System.Int32] $serverPort)
@@ -10,84 +9,225 @@ function HaltIfUnavailable(){
         Write-Host("  Server is already running or something is already listening on this port.")
         exit
     } catch [System.Net.Sockets.SocketException] {
-        Write-Host("Server starting...")
+        Write-Host("Attempting to start server...")
     }
     $tcpConn.Close()
 }
 
-function RequestRouter(){
+function AddBackslash(){
+    param ([System.String] $s)
+    if ($s[$s.Length-1] -ne "/"){
+        $s += "/"
+    }
+    return $s
+}
+
+function RequestToHashTable(){
+    param ([System.Net.HttpListenerRequest] $req)
+    $postContent = @{}
+    $stream = (New-Object System.IO.StreamReader($req.InputStream))
+    (ConvertFrom-Json $stream.ReadToEnd()).psobject.properties | ForEach-Object { 
+        $postContent[$_.Name] = $_.Value 
+    }
+    return $postContent
+}
+
+function GetEndpointUrl(){
+    param ([System.String] $reqUrl, [System.String] $baseUrl)
+    $endpoint = "$($reqUrl)".Replace($baseUrl, '').Replace(' ', '').ToLower()
+    return AddBackslash $endpoint
+}
+
+filter isNumeric() {
+    param ([System.String] $s)
+    return $s -is [byte]  -or $s -is [int16]  -or $s -is [int32]  -or $s -is [int64]  `
+       -or $s -is [sbyte] -or $s -is [uint16] -or $s -is [uint32] -or $s -is [uint64] `
+       -or $s -is [float] -or $s -is [double] -or $s -is [decimal]
+    # Copy/pasted this beauty from here
+    #https://stackoverflow.com/questions/10928030/in-powershell-how-can-i-test-if-a-variable-holds-a-numeric-value
+}
+
+function BuildPostQuery(){
+    param ([System.Net.HttpListenerRequest] $req, [System.String] $tableString)
+    $values = ""
+    $cols = ""
+    $query = "INSERT INTO $tableString ("
+    $postContent = RequestToHashTable $req
+    foreach($h in $postContent.Keys){
+        $cols += "$h,"
+        $v = "$($postContent.Item($h))"
+        if(-not (isNumeric $v)){
+            $v = "'$v'"
+        }
+        $values += ($v + ",")
+    }
+    return $query + $cols.Substring(0, $cols.Length-1) + ") VALUES (" + $values.Substring(0, $values.Length-1) + ")"
+}
+
+function BuildQuery(){
+    param ([System.Net.HttpListenerRequest] $req, [System.Object] $epConfig, [System.String] $id)
+    # Ah, yes. Look at all the low hanging SQL injection :)
+    $query = ""
+    $method = "$($req.HttpMethod)"
+    $tableString = "[$($epConfig.database)].[$($epConfig.schema)].[$($epConfig.table)]"
+    if($method -eq "GET"){
+        $query = "SELECT * FROM $tableString "
+        if($id -ne $epConfig.endpoint -and $id -ne "/"){
+            $query += "WHERE id='$($id.Replace('/',''))'"
+        }
+    } elseif($method -eq "POST" -and $req.HasEntityBody){
+        $query = BuildPostQuery $req $tableString
+    }
+    return $query
+}
+
+function MethodHandler(){
+    param ([System.Net.HttpListenerRequest] $req, [System.Object] $epConfig)
+    $id = AddBackslash ($req.RawUrl.Replace($epConfig.endpoint, ''))
+    $content = ""
+    if($id.Split('/').Length -le 2 -or $id -eq $epConfig.endpoint){
+        if(-not $epConfig.methods.Contains($req.HttpMethod)){
+            return Get405ErrorContent $req
+        }
+        $query = BuildQuery $req $epConfig $id
+        if($query -eq ""){
+            return Get400ErrorContent $req "Bad body content given"
+        } 
+        $data = DatabaseHandler $query $epConfig.server $epConfig.database
+        if($data.Length -eq 0 -and $req.HttpMethod -ne "GET"){
+            $data = "[]"
+        } else {
+            return Get404ErrorContent $req
+        }
+        $content = "{
+          `"title`": `"$($epConfig.title)`",
+          `"description`": `"$($epConfig.description)`",
+          `"errors`": [],
+          `"data`": $data
+        }"
+        
+    } 
+    return $content 
+}
+
+function DatabaseHandler(){
+    param ([System.String] $query, [System.String] $server, [System.String] $database)
+    Write-Host($query)
+    $data = Invoke-Sqlcmd -Query $query -ServerInstance $server -Database $database
+    return $data | Select-Object * -ExcludeProperty ItemArray, Table, RowError, RowState, HasErrors | ConvertTo-Json
+}
+
+function EndpointHandler(){
+    param ([System.Net.HttpListenerRequest] $req, [System.String] $reqEp)
+    $content = ""
+    if ($reqEp -eq "/" -or $reqEp -eq "/api/" -or $reqEp -eq "/api/$($config.version)/"){
+        $content = GetBaseContent
+    } else{
+        foreach ($epConfig in $config.endpoints){
+            if ($reqEp.Contains($epConfig.endpoint)){
+                $content = MethodHandler $req $epConfig
+                if($content.Length -gt 0){
+                    break
+                }
+            }
+        }
+    }
+    return $content
+}
+
+function RequestHandler(){
     param ([System.Net.HttpListenerContext] $context, [System.String] $baseUrl)
     $content = ""
-    try{
+    try {
         $resp = $context.Response
+        $resp.StatusCode = 200
         $req = $context.Request
         Write-Host("$($req.HttpMethod) $($req.Url)")
-        switch ("$($req.Url)".Replace($baseUrl, '')) {
-            ""      { $content = Get-BaseContent           ; $resp.StatusCode = 200 }
-            default { $content = Get-404ErrorContent($req) ; $resp.StatusCode = 404 }
+        $content = EndpointHandler $req (GetEndpointUrl $req.RawUrl $baseUrl)
+        if($content.Length -eq 0){
+            $content = Get404ErrorContent $req
         }
-    } catch [System.Exception] {
-        $content = Get-500ErrorContent($_)
-        $resp.StatusCode = 500
+    } catch [System.Exception]{
+        $content = Get500ErrorContent($_)
     }
+    $contentJson = $content | ConvertFrom-Json
+    if($contentJson.errors.Length -gt 0){
+        $resp.StatusCode = $contentJson.errors[0].code
+    }
+    Write-Host("Status: $($resp.StatusCode)")
+    $content = [System.Text.Encoding]::UTF8.GetBytes($content)
     $resp.ContentLength64 = $content.Length
     $resp.OutputStream.Write($content, 0, $content.Length)
     $resp.Close()
 }
 
-function Get-BaseContent(){
-    return [System.Text.Encoding]::UTF8.GetBytes("{
-      `"title`": `"Base API`",
-      `"messages`": [
-        {
-          `"type`": `"Information`",
-          `"content`": `"Base endpoint for my PowerShell CRUD API`"
-        }
-      ],
+function GetBaseContent(){
+    $endpoints = $config.endpoints | Select-Object * -ExcludeProperty server, database, schema, table, unique-identifier | ConvertTo-Json
+    return "{
+      `"title`": `"Base Endpoint for my PowerShell API`",
+      `"description`": `"For some reason I decided to make an API in PowerShell`",
       `"errors`": [],
-      `"data`": []
-    }")
+      `"data`": $endpoints
+    }"
 }
 
-function Get-404ErrorContent(){
+function Get400ErrorContent(){
+    param ([System.Net.HttpListenerRequest] $req, [System.String] $msg)
+    return GetErrorContent 400 "Bad Request" $msg $req
+}
+
+function Get404ErrorContent(){
     param ([System.Net.HttpListenerRequest] $req)
-    return Get-ErrorContent "404 Not Found" "$($req.Url) was not found" $req
+    return GetErrorContent 404 "Not Found" "$($req.Url) was not found" $req
 }
 
-function Get-500ErrorContent(){
+function Get405ErrorContent(){
+    param ([System.Net.HttpListenerRequest] $req)
+    return GetErrorContent 405 "Method Not Allowed" "$($req.Url) does not support $($req.HttpMethod)" $req
+}
+
+function Get500ErrorContent(){
     param ([System.Management.Automation.ErrorRecord] $ex)
-    # Obviously including this much info in a 500 error message back to the client is bad for security,
-    #   but this is for education so I'm not going to think like that.
     $msg = "$($ex.Exception.Message + " " + $ex.InvocationInfo.PositionMessage)"
-    return Get-ErrorContent "500 Internal Server Error" $msg
+    return GetErrorContent 500 "Internal Server Error" $msg
 }
 
-function Get-ErrorContent(){
-    param ([System.String] $type, [System.String] $msg, [System.Net.HttpListenerRequest] $req)
-    Write-Host("$type  $msg")
-    return [System.Text.Encoding]::UTF8.GetBytes("{
+function GetErrorContent(){
+    param ([System.Int32] $code, [System.String] $type, [System.String] $msg, [System.Net.HttpListenerRequest] $req)
+    Write-Host("$code  $type  $msg")
+    return "{
       `"title`": `"Error`",
-      `"messages`": [],
+      `"description`": `"`",
       `"errors`": [
         {
+          `"code`": `"$code`",
           `"type`": `"$type`",
           `"content`": `"$msg`"
         }
       ],
       `"data`": []
-    }")
+    }"
 }
+
+# TODO:    
+#   Make a utils script and offload a bunch of this nonsense
+#   GET /programmers/  and /programmers/{id} is broken after making POST  (404ing)
 
 
 $config = Get-Content server.json | Out-String | ConvertFrom-Json;
-$baseUrl = "http://$($config.host):$($config.port)/"
+$baseUrl = "http://$($config.server.host):$($config.server.port)/"
 HaltIfUnavailable $config.host $config.port
-
 $server = (New-Object System.Net.HttpListener)
-$server.Prefixes.Add($baseUrl)
-$server.Start()
+try {
+    $server.Prefixes.Add($baseUrl)
+    $server.Start()
+} catch [System.Exception]{
+    Write-Host("$($_.Exception.Message + " " + $_.InvocationInfo.PositionMessage)")
+    Write-Host("Fatal Error; Server could not be started.")
+    exit
+}
 Write-Host("Listening on $baseUrl ...")
-while($server.IsListening) {
-    RequestRouter $server.GetContext() $baseUrl
+while ($server.IsListening){
+    RequestHandler $server.GetContext() $baseUrl
 }
 $server.Stop()
