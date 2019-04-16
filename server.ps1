@@ -47,6 +47,39 @@ filter isNumeric() {
     # https://stackoverflow.com/questions/10928030/in-powershell-how-can-i-test-if-a-variable-holds-a-numeric-value
 }
 
+function BuildDeleteQuery(){
+    param (
+        [System.Net.HttpListenerRequest] $req, 
+        [System.String] $tableString, 
+        [System.String] $id,
+        [System.String] $identifier
+    )
+    $query = "DELETE FROM $tableString "
+    if($id -ne $epConfig.endpoint -and $id -ne "/"){
+        $query += "WHERE $($epConfig.identifier)='$($id.Replace('/',''))'"
+    }
+    return $query
+}
+
+function BuildPutQuery(){
+    param (
+        [System.Net.HttpListenerRequest] $req, 
+        [System.String] $tableString, 
+        [System.String] $id,
+        [System.String] $identifier
+    )
+    $query = "UPDATE $tableString SET "
+    $postContent = RequestToHashTable $req
+    foreach($h in $postContent.Keys){
+        $v = "$($postContent.Item($h))"
+        if(-not (isNumeric $v)){
+            $v = "'$v'"
+        }
+        $query += ("$h=" + $v + ",")
+    }
+    return $query.Substring(0, $query.Length-1) + " WHERE $identifier=$($id.Replace('/',''))"
+}
+
 function BuildPostQuery(){
     param ([System.Net.HttpListenerRequest] $req, [System.String] $tableString)
     $values = ""
@@ -73,10 +106,14 @@ function BuildQuery(){
     if($method -eq "GET"){
         $query = "SELECT * FROM $tableString "
         if($id -ne $epConfig.endpoint -and $id -ne "/"){
-            $query += "WHERE id='$($id.Replace('/',''))'"
+            $query += "WHERE $($epConfig.identifier)='$($id.Replace('/',''))'"
         }
     } elseif($method -eq "POST" -and $req.HasEntityBody){
         $query = BuildPostQuery $req $tableString
+    } elseif($method -eq "PUT" -and $req.HasEntityBody){
+        $query = BuildPutQuery $req $tableString $id "$($epConfig.identifier)"
+    } elseif($method -eq "DELETE"){
+        $query = BuildDeleteQuery $req $tableString $id "$($epConfig.identifier)"
     }
     return $query
 }
@@ -94,10 +131,12 @@ function MethodHandler(){
             return Get400ErrorContent $req "Bad body content given"
         } 
         $data = DatabaseHandler $query $epConfig.server $epConfig.database
-        if($data.Length -eq 0 -and $req.HttpMethod -ne "GET"){
-            $data = "[]"
-        } else {
-            return Get404ErrorContent $req
+        if($data.Length -eq 0){
+            if($req.HttpMethod -eq "GET"){
+                return Get404ErrorContent $req
+            } else{
+                $data = "[]"
+            }
         }
         $content = "{
           `"title`": `"$($epConfig.title)`",
@@ -142,7 +181,7 @@ function RequestHandler(){
         $resp.StatusCode = 200
         $req = $context.Request
         Write-Host("$($req.HttpMethod) $($req.Url)")
-        $content = EndpointHandler $req (GetEndpointUrl $req.RawUrl $baseUrl)
+        $content = EndpointHandler $req (GetEndpointUrl $req.RawUrl $baseUrl) $config
         if($content.Length -eq 0){
             $content = Get404ErrorContent $req
         }
@@ -194,7 +233,7 @@ function Get500ErrorContent(){
 
 function GetErrorContent(){
     param ([System.Int32] $code, [System.String] $type, [System.String] $msg)
-    Write-Host("$code  $type  $msg")
+    Write-Host("$code $type $msg")
     return "{
       `"title`": `"Error`",
       `"description`": `"`",
@@ -208,11 +247,6 @@ function GetErrorContent(){
       `"data`": []
     }"
 }
-
-# TODO:    
-#   Make a utils script and offload a bunch of this nonsense
-#   GET /programmers/  and /programmers/{id} is broken after making POST  (404ing)
-
 
 $config = Get-Content server.json | Out-String | ConvertFrom-Json;
 $baseUrl = "http://$($config.server.host):$($config.server.port)/"

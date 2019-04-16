@@ -1,0 +1,38 @@
+{
+    "version": "v1",
+    "server" : {
+        "host": "127.0.0.1",
+        "port": 10024
+    },
+    "endpoints": [
+        {
+            "server": "server",
+            "database": "db",
+            "schema": "dbo",
+            "table": "Programmers",
+            "endpoint": "/api/v1/programmers/",
+            "title": "Programmers Endpoint",
+            "description": "Get information about a programmer",
+            "identifier": "id",
+            "methods": [
+                "GET", 
+                "PUT", 
+                "POST", 
+                "DELETE"
+            ]
+        },
+        {
+            "server": "server",
+            "database": "db",
+            "schema": "dbo",
+            "table": "Products",
+            "endpoint": "/api/v1/products/",
+            "title": "Products Endpoint",
+            "description": "Get information about some product",
+            "identifier": "id",
+            "methods": [
+                "GET"
+            ]
+        }
+    ]
+}

@@ -1,7 +1,26 @@
 # PowerShell-CRUD
 
-To learn the gist of PowerShell I decided to try making a basic CRUD API
+To learn the gist of PowerShell I decided to try making a basic CRUD API.
 
+This CRUD API is configured using ```server.json``` which allows it to use multiple
+shallow endpoints via JSON.
+
+You're probably wondering why its all in one script? Its because I am lazy
+
+
+## Server Output Example
+```
+Attempting to start server...
+Listening on http://127.0.0.1:10024/ ...
+GET http://127.0.0.1:10024/api
+Status: 200
+GET http://127.0.0.1:10024/api/v1/programmers
+SELECT * FROM [PowerShell_CRUD].[dbo].[Programmers]
+Status: 200
+GET http://127.0.0.1:10024/api/v1/programmers/1
+SELECT * FROM [PowerShell_CRUD].[dbo].[Programmers] WHERE id='1'
+Status: 200
+```
 
 ## Base API GET Response
 ```json
@@ -34,11 +53,21 @@ To learn the gist of PowerShell I decided to try making a basic CRUD API
 ```
 
 
-## /programmers GET
-
-
-
-
+## /programmers/{id} GET
+```json
+{
+    "title": "Programmers Endpoint",
+    "description": "Get information about a programmer",
+    "errors": [],
+    "data": {
+        "id": 1,
+        "first_name": "Barrett",
+        "last_name": "Otte",
+        "platform": "Linux",
+        "favorite_language": "Python"
+    }
+}
+```
 
 
 ## References
